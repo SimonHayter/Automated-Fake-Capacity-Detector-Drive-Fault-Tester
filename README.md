@@ -152,6 +152,42 @@ Alternatively, check your router's connected device list. You can then connect f
 
 ---
 
+## How Long Does It Take?
+
+This is the gold standard in drive testing — and that thoroughness comes at a cost: time. Every byte of every drive is written, then independently verified. There are no shortcuts, and there shouldn't be. The process exists to catch drives that cheat, and a rushed test is exactly what counterfeit firmware is designed to survive.
+
+**How long will vary significantly depending on:**
+
+- Drive capacity — a 256 GB drive takes considerably longer than a 32 GB one
+- Drive speed — a fast NVMe will finish far sooner than a slow USB 2.0 flash drive
+- Bus speed — USB 2.0, USB 3.0, SATA, and PCIe all have very different real-world throughputs
+- System load — running multiple drives in parallel shares the host's I/O bandwidth
+- Drive health — a drive with thermal throttling or marginal sectors will slow down under sustained load
+
+There is no progress bar. The script will run each tool sequentially per drive, silently in the background, and when everything is complete it will print a summary of every drive — what passed, what failed, and why.
+
+**For large or slow drives, plan to run this overnight.** If you are processing drives in bulk, make sure your setup has adequate airflow and cooling. Hard drives — particularly SSDs — will throttle their speeds when they overheat, which not only extends the test time but can mask marginal hardware that would otherwise fail. A drive that throttles and limps through is not a drive you want to trust.
+
+### Monitoring Progress
+
+Although there is no built-in progress meter, you can check in on what each drive is doing at any time by opening a second terminal and running:
+
+```bash
+iostat -m 3 -p
+```
+
+This refreshes every 3 seconds and shows live read/write activity per device. Here is how to interpret what you see:
+
+| Activity | What it means |
+|---|---|
+| **High writes, low reads** | Drive is in the F3Write phase — laying down the pseudo-random pattern across the full capacity. For flash drives and SD cards that skipped the cryptographic erase, this is also effectively a deep wipe of any residual data. This is the early stage. |
+| **High reads, low writes** | Drive is in the F3Read phase — verifying every byte written matches what was recorded. This is the final and most critical stage. It still takes a long time, but completion is approaching. Any byte that does not match is logged as a failure. |
+| **Low or no activity** | The drive has finished, or is between steps (formatting, partitioning, copying logs). |
+
+If a drive fails F3Read, the cause is almost always one of two things: **fake capacity** — extremely common with USB flash drives, SD cards, and budget Chinese SSDs — or genuine read/write faults on a drive that is failing. Either way, the result file on the drive will tell you exactly what was lost and where.
+
+---
+
 ## Output & Evidence
 
 At the end of each drive's workflow, the drive itself contains a complete evidence package inside `test_reports_XXXX/`:
