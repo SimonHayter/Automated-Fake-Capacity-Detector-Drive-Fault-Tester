@@ -12,7 +12,7 @@
 #   7. Mount the drive
 #   8. Create test_reports_XXXX folder (XXXX = last 4 of serial) on the drive
 #   9. Move matching Eraser .txt logs (matched by serial INSIDE the file)
-#      into that folder, then delete sd?-Erase-Log-*.pdf files
+#      into that folder, then delete *-Erase-Log-*.pdf files
 #  10. Move f3 logs to the drive (matched by serial, not device name)
 #
 # If any step fails (e.g. no eraser logs found), the message is written into
@@ -115,10 +115,22 @@ settle() {
     sleep 1
 }
 
+# Get the partition device path for a drive. NVMe / eMMC / loop devices need
+# a 'p' separator (nvme0n1p1, mmcblk0p1) - SATA/USB drives do not (sda1).
+# Rule: if the drive name ends in a digit, insert 'p' before the partition number.
+part_dev() {
+    local dev="$1" partnum="${2:-1}"
+    if [[ "$dev" =~ [0-9]$ ]]; then
+        echo "/dev/${dev}p${partnum}"
+    else
+        echo "/dev/${dev}${partnum}"
+    fi
+}
+
 # Find current device name for a drive given its serial number.
 find_dev_by_serial() {
     local target_serial="$1" dev current
-    for dev in /sys/block/sd*; do
+    for dev in /sys/block/sd* /sys/block/nvme* /sys/block/mmcblk*; do
         [ -e "$dev" ] || continue
         current=$(basename "$dev")
         local s
@@ -138,7 +150,8 @@ find_eraser_logs_by_serial() {
     [ -d "$ERASER_LOG_DIR" ] || return 0
     # -l = filenames only, -F = fixed string (no regex surprises in serials)
     # Restrict to the eraser txt naming pattern so we don't grep random files.
-    grep -lF "$serial" "$ERASER_LOG_DIR"/sd?-Erase-Log-*.txt 2>/dev/null
+    # Broaden glob to catch sd?-, nvme*-, mmcblk*- naming conventions
+    grep -lF "$serial" "$ERASER_LOG_DIR"/*-Erase-Log-*.txt 2>/dev/null
 }
 
 # Append a warning line to a per-worker pending-warnings file. These get
@@ -154,7 +167,7 @@ queue_warning() {
 ###############################################################################
 process_drive() {
     local dev="$1"
-    local SERIAL MODEL SIZE LABEL
+    local SERIAL MODEL SIZE LABEL PART
     local WRITE_LOG READ_LOG FORMAT_LOG WORKER_LOG
 
     # Capture identifying info BEFORE we touch anything
@@ -162,6 +175,7 @@ process_drive() {
     MODEL=$(get_field  "$dev" MODEL)
     SIZE=$(get_field   "$dev" SIZE)
     LABEL=$(short_serial "$SERIAL")
+    PART=$(part_dev "$dev")  # /dev/sda1, /dev/nvme0n1p1, /dev/mmcblk0p1, etc.
 
     # All logs named by serial (device-name-agnostic from this point on)
     WRITE_LOG="${WORK_DIR}/f3_write_${SERIAL}.log"
@@ -222,7 +236,7 @@ process_drive() {
 
     # Format exFAT
     echo "--- mkfs.exfat (pre-test label TEST${LABEL}) ---" >> "$FORMAT_LOG"
-    mkfs.exfat -L "TEST${LABEL}" "/dev/${dev}1" >> "$FORMAT_LOG" 2>&1
+    mkfs.exfat -L "TEST${LABEL}" "$PART" >> "$FORMAT_LOG" 2>&1
     settle "$dev"
 
     ###########################################################################
@@ -233,9 +247,9 @@ process_drive() {
     local MOUNT_POINT="/mnt/${dev}_test"
     mkdir -p "$MOUNT_POINT"
 
-    if ! mount "/dev/${dev}1" "$MOUNT_POINT"; then
-        echo "MOUNT FAILED for /dev/${dev}1 before f3 test"
-        queue_warning "$SERIAL" "Mount failed for /dev/${dev}1 before f3 test - drive could not be tested"
+    if ! mount "$PART" "$MOUNT_POINT"; then
+        echo "MOUNT FAILED for ${PART} before f3 test"
+        queue_warning "$SERIAL" "Mount failed for ${PART} before f3 test - drive could not be tested"
         echo "/dev/$dev [${MODEL} | ${SIZE} | SN:${SERIAL}] : MOUNT_FAILED" > "${WORK_DIR}/result_${SERIAL}.line"
         return 1
     fi
@@ -246,7 +260,7 @@ process_drive() {
     umount "$MOUNT_POINT"
     sync
     echo 3 > /proc/sys/vm/drop_caches
-    mount "/dev/${dev}1" "$MOUNT_POINT"
+    mount "$PART" "$MOUNT_POINT"
 
     f3read "$MOUNT_POINT" >> "$READ_LOG" 2>&1
 
@@ -276,6 +290,8 @@ process_drive() {
         echo "NOTE: device name changed: $dev -> $current_dev" >> "$WORKER_LOG"
         dev="$current_dev"
     fi
+    # Refresh PART in case the device name (and therefore partition path) changed
+    PART=$(part_dev "$dev")
 
     ###########################################################################
     # STEP 5-6: Recreate msdos partition table + exFAT formatted with serial label
@@ -308,19 +324,19 @@ process_drive() {
 
     # exFAT labels: max 11 chars, must be valid - use last 4 of serial
     echo "--- mkfs.exfat (final label $LABEL) ---" >> "$FORMAT_LOG"
-    mkfs.exfat -L "$LABEL" "/dev/${dev}1" >> "$FORMAT_LOG" 2>&1
+    mkfs.exfat -L "$LABEL" "$PART" >> "$FORMAT_LOG" 2>&1
     settle "$dev"
 
     ###########################################################################
     # STEP 7: Mount the freshly formatted drive
     ###########################################################################
-    echo "[STEP 7] Mounting freshly formatted /dev/${dev}1..."
+    echo "[STEP 7] Mounting freshly formatted ${PART}..."
 
     local FINAL_MOUNT="/mnt/${LABEL}"
     mkdir -p "$FINAL_MOUNT"
-    if ! mount "/dev/${dev}1" "$FINAL_MOUNT"; then
-        echo "ERROR: Final mount failed for /dev/${dev}1" >> "$WORKER_LOG"
-        queue_warning "$SERIAL" "Final mount failed for /dev/${dev}1 - reports could not be copied to drive"
+    if ! mount "$PART" "$FINAL_MOUNT"; then
+        echo "ERROR: Final mount failed for ${PART}" >> "$WORKER_LOG"
+        queue_warning "$SERIAL" "Final mount failed for ${PART} - reports could not be copied to drive"
         echo "/dev/$dev [${MODEL} | ${SIZE} | SN:${SERIAL}] : $RESULT (Speed: $SPEED) | FINAL_MOUNT_FAILED" > "${WORK_DIR}/result_${SERIAL}.line"
         return 1
     fi
@@ -329,7 +345,7 @@ process_drive() {
     # STEP 8-10: Build test_reports_XXXX folder on drive, copy logs in,
     # find & move Eraser logs by serial, then delete matching PDFs.
     ###########################################################################
-    echo "[STEP 8-10] Copying reports + eraser logs onto /dev/${dev}1..."
+    echo "[STEP 8-10] Copying reports + eraser logs onto ${PART}..."
 
     local REPORTS_DIR="${FINAL_MOUNT}/test_reports_${LABEL}"
     mkdir -p "$REPORTS_DIR"
@@ -397,7 +413,7 @@ Reports in this folder:
   - f3_write_${SERIAL}.log    : f3write capacity/integrity test
   - f3_read_${SERIAL}.log     : f3read verification + speed
   - format_${SERIAL}.log      : Pre- and post-test partition/format ops
-  - sd?-Erase-Log-*.txt       : Parted Magic Eraser reports (if found)
+  - *-Erase-Log-*.txt         : Parted Magic Eraser reports (if found)
 
 If a /warnings folder exists at the root of this drive, review it -
 something didn't go as planned.
@@ -406,7 +422,7 @@ EOF
     sync
     umount "$FINAL_MOUNT" 2>/dev/null
     # Remount cleanly for the user
-    mount "/dev/${dev}1" "$FINAL_MOUNT"
+    mount "$PART" "$FINAL_MOUNT"
 
     # Write one-line result to a per-worker file (avoids interleaving with other workers)
     echo "/dev/$dev [${MODEL} | ${SIZE} | SN:${SERIAL}] : $RESULT (Speed: $SPEED) | Eraser: $ERASER_STATUS | Mounted: $FINAL_MOUNT" > "${WORK_DIR}/result_${SERIAL}.line"
@@ -619,7 +635,7 @@ for pid in "${PIDS[@]}"; do
 done
 
 ###############################################################################
-# Post-run: delete sd?-Erase-Log-*.pdf files from the eraser log directory.
+# Post-run: delete *-Erase-Log-*.pdf files from the eraser log directory.
 # Done ONCE at the end (not per-worker) to avoid races. Only PDFs matching
 # the eraser naming pattern are touched - any other PDFs are left alone.
 ###############################################################################
@@ -628,7 +644,7 @@ echo "Cleaning up eraser PDF files in ${ERASER_LOG_DIR} ..."
 if [ -d "$ERASER_LOG_DIR" ]; then
     # nullglob so the glob expands to nothing (not the literal pattern) if no matches
     shopt -s nullglob
-    pdf_files=( "$ERASER_LOG_DIR"/sd?-Erase-Log-*.pdf )
+    pdf_files=( "$ERASER_LOG_DIR"/*-Erase-Log-*.pdf )
     shopt -u nullglob
     if [ ${#pdf_files[@]} -gt 0 ]; then
         echo "Deleting ${#pdf_files[@]} eraser PDF(s):"

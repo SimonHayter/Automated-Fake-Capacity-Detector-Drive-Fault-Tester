@@ -86,6 +86,16 @@ DRIVES=(sda, sdb, sdc)
 
 Add or remove drive names separated by commas — no quotes needed. When `test.sh` starts it will display the list and ask you to confirm before touching anything.
 
+Use the correct naming convention for each drive type:
+
+| Drive Type | Device Name Format | Example |
+|---|---|---|
+| SATA HDD/SSD, USB drives | `sd?` | `sda`, `sdb`, `sdc` |
+| NVMe SSD | `nvme?n?` | `nvme0n1`, `nvme1n1` |
+| SD card / eMMC | `mmcblk?` | `mmcblk0`, `mmcblk1` |
+
+The script automatically picks the right partition path for each type (`/dev/sda1` for SATA, `/dev/nvme0n1p1` for NVMe, `/dev/mmcblk0p1` for SD), so you only ever need to give it the base drive name.
+
 ### Finding the right drive names
 
 The best way to identify which drives you want to test is to open **Disk Health (GSmartControl)** from the Parted Magic desktop. It lists every connected drive along with its device name (e.g. `sda`, `sdb`), model, serial number, and SMART health status — giving you everything you need to pick the right devices and spot any that are already showing faults before the test even begins.
