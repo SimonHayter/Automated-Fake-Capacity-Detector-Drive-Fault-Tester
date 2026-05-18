@@ -188,6 +188,22 @@ If a drive fails F3Read, the cause is almost always one of two things: **fake ca
 
 ---
 
+## Windows Compatibility & exFAT Partition Type
+
+When Linux tools create an MBR (msdos) partition table, the partition type byte is set to `0x83` — the Linux filesystem identifier — by default. Windows uses this byte to decide whether to even attempt to read a partition, and because `0x83` is not a type it recognises, it will silently ignore the drive or show it as unformatted, even though the exFAT filesystem itself is perfectly valid.
+
+The correct partition type for exFAT (and NTFS) on an MBR table is `0x07`. The script automatically corrects this after every partition creation step using:
+
+```bash
+sfdisk --part-type /dev/sdX 1 7
+```
+
+This is applied at both the pre-test format stage and the final format stage, so the finished drive will mount cleanly in Windows, macOS, and Linux without any manual intervention.
+
+> If you ever format a drive manually on Linux and find Windows won't read it, this is almost certainly the reason. Run the `sfdisk` command above (substituting the correct device) to fix it in seconds.
+
+---
+
 ## Output & Evidence
 
 At the end of each drive's workflow, the drive itself contains a complete evidence package inside `test_reports_XXXX/`:
