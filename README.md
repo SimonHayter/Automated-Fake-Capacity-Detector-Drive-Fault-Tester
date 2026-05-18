@@ -76,6 +76,24 @@ When the erase completes, Parted Magic automatically saves a report to `/home/pa
 
 ---
 
+## Selecting Drives — `drives.conf`
+
+Before running the script you need to tell it which drives to process. Open `drives.conf` and edit the `DRIVES` line:
+
+```
+DRIVES=(sda, sdb, sdc)
+```
+
+Add or remove drive names separated by commas — no quotes needed. When `test.sh` starts it will display the list and ask you to confirm before touching anything.
+
+### Finding the right drive names
+
+The best way to identify which drives you want to test is to open **Disk Health (GSmartControl)** from the Parted Magic desktop. It lists every connected drive along with its device name (e.g. `sda`, `sdb`), model, serial number, and SMART health status — giving you everything you need to pick the right devices and spot any that are already showing faults before the test even begins.
+
+> **Important:** double-check that your Parted Magic boot drive is **not** included in `drives.conf`. `test.sh` will wipe and reformat every drive it is given without further warning beyond the initial confirmation prompt.
+
+---
+
 ## Getting Started
 
 ### Requirements
@@ -154,9 +172,10 @@ This makes each tested drive self-documenting — the audit trail travels with t
    └── HDD/SSD: ATA Secure Erase / ATA Sanitize / NVMe Secure Erase
    └── Flash/SD: dd zero fill
 3. chmod +x test.sh unplug.sh vnc.sh
-4. Plug in all drives to be tested
-5. Run ./test.sh
-6. Review logs on each drive when complete
+4. Open Disk Health (GSmartControl) to identify drive names (sda, sdb, etc.)
+5. Edit drives.conf with the drives you want to test
+6. Run ./test.sh — confirm the drive list when prompted
+7. Review logs on each drive when complete
 ```
 
 ---
